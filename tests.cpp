@@ -27,16 +27,30 @@ public:
     using value_t = T;
     using ptr_t = T*;
     using reference_t = T&;
-    using deleter_t = typename detail::ControlBlock<T>::deleter_t;
+    using control_block_t = detail::ControlBlock<std::remove_const_t<T>>;
+    using deleter_t = typename control_block_t::deleter_t;
 
-    explicit SharedPtr(ptr_t instance,
-                       deleter_t deleter = std::default_delete<value_t>{})
-        : m_control_block{new detail::ControlBlock{std::move(deleter)}},
+    // TODO: limit that to base classes and const/non-const alternatives
+    template <typename U>
+    friend class SharedPtr;
+
+    explicit SharedPtr(
+        ptr_t instance,
+        deleter_t deleter = std::default_delete<std::remove_const_t<value_t>>{})
+        : m_control_block{new detail::ControlBlock<
+              std::remove_const_t<value_t>>{std::move(deleter)}},
           m_ptr{instance} {}
 
     // TODO: handle class hierarchies
-    // TODO: handle const T
-    explicit SharedPtr(const SharedPtr& other)
+    explicit SharedPtr(const SharedPtr& other)  noexcept
+        : m_control_block{other.m_control_block}, m_ptr{other.m_ptr} {
+        ++m_control_block->m_count;
+    }
+
+    template <typename U>
+    requires(std::is_const_v<T> and not std::is_const_v<U> and
+             std::is_same_v<std::remove_const_t<T>,
+                            U>) explicit SharedPtr(const SharedPtr<U>& other) noexcept
         : m_control_block{other.m_control_block}, m_ptr{other.m_ptr} {
         ++m_control_block->m_count;
     }
@@ -48,12 +62,12 @@ public:
     }
 
     ~SharedPtr() {
-        // TODO: handle erased deleter
         // TODO: handle atomic access
         if (m_control_block) {
             --m_control_block->m_count;
             if (!m_control_block->m_count) {
-                m_control_block->delete_owned(m_ptr);
+                m_control_block->delete_owned(
+                    const_cast<std::remove_const_t<value_t>*>(m_ptr));
                 // TODO: handle weak_ptr count
                 delete m_control_block;
             }
@@ -64,7 +78,7 @@ public:
     reference_t operator*() noexcept { return *get(); }
 
 private:
-    detail::ControlBlock<T>* m_control_block;
+    control_block_t* m_control_block;
     ptr_t m_ptr;
 };
 
@@ -133,6 +147,19 @@ TEST_CASE("Construction") {
             CHECK(Traced::alive_count() == 0);
             CHECK(deleter_called);
         }
+    }
+    GIVEN("a shared pointer to a mutable object") {
+        SharedPtr<Traced> sut{new Traced{}};
+        WHEN("copy-constructing a pointer to const") {
+            SharedPtr<const Traced> sut2{sut};
+            REQUIRE(Traced::alive_count() == 1);
+            THEN("will point to the same instance") {
+                CHECK(sut.get() == sut2.get());
+            }
+        }
+        //        WHEN("copy-constructing a pointer to const") {
+        //            SharedPtr<Traced> sut2{sut};
+        //        }
     }
     GIVEN("a shared pointer shared between instances") {
         REQUIRE(Traced::alive_count() == 0);
