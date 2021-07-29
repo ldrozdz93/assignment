@@ -42,17 +42,25 @@ public:
           m_ptr{instance} {}
 
     // TODO: handle class hierarchies
-    explicit SharedPtr(const SharedPtr& other)  noexcept
+    explicit SharedPtr(const SharedPtr& other) noexcept
         : m_control_block{other.m_control_block}, m_ptr{other.m_ptr} {
         ++m_control_block->m_count;
     }
 
     template <typename U>
-    requires(std::is_const_v<T> and not std::is_const_v<U> and
-             std::is_same_v<std::remove_const_t<T>,
-                            U>) explicit SharedPtr(const SharedPtr<U>& other) noexcept
+    requires(std::is_const_v<T>and std::is_same_v<
+             std::remove_const_t<T>, U>) explicit SharedPtr(const SharedPtr<U>&
+                                                                other) noexcept
         : m_control_block{other.m_control_block}, m_ptr{other.m_ptr} {
         ++m_control_block->m_count;
+    }
+    template <typename U>
+    requires(std::is_const_v<T>and std::is_same_v<
+             std::remove_const_t<T>, U>) explicit SharedPtr(SharedPtr<U>&&
+                                                                other) noexcept
+        : m_control_block{other.m_control_block}, m_ptr{other.m_ptr} {
+        other.m_control_block = nullptr;
+        other.m_ptr = nullptr;
     }
 
     explicit SharedPtr(SharedPtr&& other) noexcept
@@ -157,9 +165,14 @@ TEST_CASE("Construction") {
                 CHECK(sut.get() == sut2.get());
             }
         }
-        //        WHEN("copy-constructing a pointer to const") {
-        //            SharedPtr<Traced> sut2{sut};
-        //        }
+        WHEN("move-constructing a pointer to const") {
+            SharedPtr<const Traced> sut2{std::move(sut)};
+            REQUIRE(Traced::alive_count() == 1);
+            THEN("will take sole ownership") {
+                CHECK(sut2.get());
+                CHECK(not sut.get());
+            }
+        }
     }
     GIVEN("a shared pointer shared between instances") {
         REQUIRE(Traced::alive_count() == 0);
