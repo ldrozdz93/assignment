@@ -34,6 +34,10 @@ public:
     template <typename U>
     friend class SharedPtr;
 
+    explicit SharedPtr() noexcept : m_control_block{nullptr}, m_ptr{nullptr} {}
+    explicit SharedPtr(std::nullptr_t) noexcept
+        : m_control_block{nullptr}, m_ptr{nullptr} {}
+
     explicit SharedPtr(
         ptr_t instance,
         deleter_t deleter = std::default_delete<std::remove_const_t<value_t>>{})
@@ -82,6 +86,7 @@ public:
         }
     }
 
+    // TODO: re-consider rvalue specifiers
     ptr_t get() const noexcept { return m_ptr; }
     reference_t operator*() noexcept { return *get(); }
 
@@ -110,6 +115,14 @@ private:
 */
 
 TEST_CASE("Construction") {
+    WHEN("default-constructed") {
+        SharedPtr<Traced> sut{};
+        THEN("will be null") { CHECK(sut.get() == nullptr); }
+    }
+    WHEN("constructed with nullptr") {
+        SharedPtr<Traced> sut{nullptr};
+        THEN("will be null") { CHECK(sut.get() == nullptr); }
+    }
     WHEN("constructed with a pointer") {
         Traced* value = new Traced{};
         THEN("takes ownership & deletes on destruction") {
