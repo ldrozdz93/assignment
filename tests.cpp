@@ -168,6 +168,19 @@ TEST_CASE("Construction") {
             CHECK(Traced::alive_count() == 0);
             CHECK(deleter_called);
         }
+        THEN("propagates the deleter on copy") {
+            {
+                SharedPtr<Traced> sut = [&] {
+                    SharedPtr<Traced> sut2{new Traced{}, deleter};
+                    SharedPtr<Traced> sut3{sut2};
+                    return SharedPtr<Traced>{sut3};
+                }();
+                CHECK(Traced::alive_count() == 1);
+                CHECK(!deleter_called);
+            }
+            CHECK(Traced::alive_count() == 0);
+            CHECK(deleter_called);
+        }
     }
     GIVEN("a shared pointer to a mutable object") {
         SharedPtr<Traced> sut{new Traced{}};
