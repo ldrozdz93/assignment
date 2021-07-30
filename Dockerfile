@@ -11,6 +11,7 @@ RUN apt-get update -q \
     cmake \
     make \
     libstdc++-10-dev \
+    libboost-dev \
  && apt-get clean -q
 
 ENV CC=/usr/bin/clang-10

@@ -1,4 +1,7 @@
+#include <algorithm>
 #include <atomic>
+#include <boost/thread/latch.hpp>
+#include <thread>
 
 #include "catch.hpp"
 
@@ -13,14 +16,17 @@ public:
         : m_count{1}, m_deleter{std::move(deleter)} {}
     ControlBlock(const ControlBlock&) = delete;
 
-    std::atomic<std::size_t> m_count;
     void delete_owned(const ptr_t ptr) { m_deleter(ptr); }
 
     [[nodiscard]] std::size_t get_count() const noexcept { return m_count; }
+    [[nodiscard]] std::size_t fetch_sub_1() noexcept {
+        return m_count.fetch_sub(1);
+    }
     void increment_count() noexcept { ++m_count; }
     void decrement_count() noexcept { ++m_count; }
 
 private:
+    std::atomic<std::size_t> m_count;
     const deleter_t m_deleter;
 };
 }  // namespace detail
@@ -52,7 +58,7 @@ public:
     // TODO: handle class hierarchies
     explicit SharedPtr(const SharedPtr& other) noexcept
         : m_control_block{other.m_control_block}, m_ptr{other.m_ptr} {
-        ++m_control_block->m_count;
+        m_control_block->increment_count();
     }
 
     template <typename U>
@@ -60,7 +66,7 @@ public:
              std::remove_const_t<T>, U>) explicit SharedPtr(const SharedPtr<U>&
                                                                 other) noexcept
         : m_control_block{other.m_control_block}, m_ptr{other.m_ptr} {
-        ++m_control_block->m_count;
+        m_control_block->increment_count();
     }
     template <typename U>
     requires(std::is_const_v<T>and std::is_same_v<
@@ -79,8 +85,10 @@ public:
 
     void reset() noexcept {
         if (m_control_block) {
-            --m_control_block->m_count;
-            if (!m_control_block->m_count) {
+            const auto count_prior_to_decrement =
+                m_control_block->fetch_sub_1();
+
+            if (1 == count_prior_to_decrement) {
                 m_control_block->delete_owned(
                     const_cast<std::remove_const_t<value_t>*>(m_ptr));
                 // TODO: handle weak_ptr count
@@ -122,22 +130,14 @@ public:
         return *this;
     }
 
-    ~SharedPtr() {
-        // TODO: handle atomic access
-        if (m_control_block) {
-            --m_control_block->m_count;
-            if (!m_control_block->m_count) {
-                m_control_block->delete_owned(
-                    const_cast<std::remove_const_t<value_t>*>(m_ptr));
-                // TODO: handle weak_ptr count
-                delete m_control_block;
-            }
-        }
-    }
+    ~SharedPtr() { reset(); }
 
     // TODO: re-consider rvalue specifiers
     ptr_t get() const noexcept { return m_ptr; }
     reference_t operator*() noexcept { return *get(); }
+    [[nodiscard]] std::size_t use_count() const noexcept {
+        return m_control_block ? m_control_block->get_count() : 0;
+    }
 
 private:
     control_block_t* m_control_block;
@@ -267,6 +267,41 @@ TEST_CASE("Construction") {
                         CHECK(Traced::alive_count() == 0);
                     }
                 }
+            }
+        }
+    }
+    GIVEN("a shared pointer shared between threads") {
+        SharedPtr<Traced> sut{new Traced{}};
+        REQUIRE(sut.use_count() == 1);
+        WHEN("copied and destructed asynchronously") {
+            constexpr auto THREAD_COUNT = 100;
+
+            boost::latch start_latch{THREAD_COUNT + 1};
+            const auto construct_destruct_multiple_times = [&start_latch,
+                                                            &sut] {
+                // note: have all threads start from this point simultaneously
+                // to increase competition
+                start_latch.count_down_and_wait();
+                for (int i = 0; i < 10000; ++i) {
+                    SharedPtr<Traced> sut2{sut};
+                }
+            };
+
+            THEN("will always handle resource properly") {
+                std::vector<std::thread> threads{};
+                std::generate_n(
+                    std::back_insert_iterator{threads}, THREAD_COUNT, [&] {
+                        return std::thread{construct_destruct_multiple_times};
+                    });
+                start_latch.count_down_and_wait();  // green light
+                for (auto& th : threads) {
+                    if (th.joinable()) {
+                        th.join();
+                    }
+                }
+
+                CHECK(sut.use_count() == 1);
+                CHECK(Traced::alive_count() == 1);
             }
         }
     }
