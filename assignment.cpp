@@ -140,6 +140,11 @@ public:
     [[nodiscard]] std::size_t use_count() const noexcept {
         return m_control_block ? m_control_block->get_count() : 0;
     }
+    friend void swap(SharedPtr& lhs, SharedPtr& rhs) noexcept{
+        using std::swap;
+        swap(lhs.m_control_block, rhs.m_control_block);
+        swap(lhs.m_ptr, rhs.m_ptr);
+    }
 
 private:
     control_block_t* m_control_block;
@@ -332,6 +337,28 @@ TEST_CASE("Assignment") {
             THEN("it's value will be proper") {
                 CHECK(sut.get() != nullptr);
                 CHECK(Traced::alive_count() == 1);
+            }
+        }
+    }
+}
+
+TEST_CASE("Swap")
+{
+    GIVEN("two shared ptr instances"){
+        auto* ptr1 = new Traced{};
+        auto* ptr2 = new Traced{};
+        SharedPtr<Traced> sut1{ptr1};
+        SharedPtr<Traced> sut2{ptr2};
+        WHEN("swapped"){
+            swap(sut1, sut2);
+            THEN("will point to swapped memory locations"){
+                CHECK(sut1.get() == ptr2);
+                CHECK(sut2.get() == ptr1);
+            }
+            THEN("will have proper lifetime managed"){
+                CHECK(Traced::alive_count() == 2);
+                CHECK(sut1.use_count() == 1);
+                CHECK(sut2.use_count() == 1);
             }
         }
     }
