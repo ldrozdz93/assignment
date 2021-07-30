@@ -7,16 +7,14 @@
 
 namespace detail {
 
-template <typename T>
 struct ControlBlock {
 public:
-    using ptr_t = T*;
-    using deleter_t = std::function<void(ptr_t)>;
-    explicit ControlBlock(deleter_t deleter)
+    using erased_deleter_t = std::function<void()>;
+    explicit ControlBlock(erased_deleter_t deleter)
         : m_count{1}, m_deleter{std::move(deleter)} {}
     ControlBlock(const ControlBlock&) = delete;
 
-    void delete_owned(const ptr_t ptr) { m_deleter(ptr); }
+    void delete_owned() { m_deleter(); }
 
     [[nodiscard]] std::size_t get_count() const noexcept { return m_count; }
     [[nodiscard]] std::size_t fetch_sub_1() noexcept {
@@ -27,8 +25,13 @@ public:
 
 private:
     std::atomic<std::size_t> m_count;
-    const deleter_t m_deleter;
+    const erased_deleter_t m_deleter;
 };
+
+template <typename F, typename T>
+[[nodiscard]] auto make_deleter(F&& deleter, T* ptr) noexcept {
+    return [deleter = std::forward<F>(deleter), ptr] { deleter(ptr); };
+}
 }  // namespace detail
 
 template <typename T>
@@ -37,8 +40,8 @@ public:
     using value_t = T;
     using ptr_t = T*;
     using reference_t = T&;
-    using control_block_t = detail::ControlBlock<std::remove_const_t<T>>;
-    using deleter_t = typename control_block_t::deleter_t;
+    using control_block_t = detail::ControlBlock;
+    using deleter_t = std::function<void(std::remove_const_t<T>*)>;
 
     // TODO: limit that to base classes and const/non-const alternatives
     template <typename U>
@@ -51,8 +54,8 @@ public:
     explicit SharedPtr(
         ptr_t instance,
         deleter_t deleter = std::default_delete<std::remove_const_t<value_t>>{})
-        : m_control_block{new detail::ControlBlock<
-              std::remove_const_t<value_t>>{std::move(deleter)}},
+        : m_control_block{new detail::ControlBlock{
+              detail::make_deleter(std::move(deleter), instance)}},
           m_ptr{instance} {}
 
     // TODO: handle class hierarchies
@@ -89,8 +92,7 @@ public:
                 m_control_block->fetch_sub_1();
 
             if (1 == count_prior_to_decrement) {
-                m_control_block->delete_owned(
-                    const_cast<std::remove_const_t<value_t>*>(m_ptr));
+                m_control_block->delete_owned();
                 // TODO: handle weak_ptr count
                 delete m_control_block;
                 m_control_block = nullptr;
@@ -112,8 +114,8 @@ public:
     SharedPtr& operator=(ptr_t ptr) {
         if (get() != ptr) {
             // note: order below relevant for strong exception safety
-            auto* new_control_block = new control_block_t{
-                std::default_delete<std::remove_const_t<value_t>>{}};
+            auto* new_control_block = new control_block_t{detail::make_deleter(
+                std::default_delete<std::remove_const_t<value_t>>{}, ptr)};
             reset();
             m_control_block = new_control_block;
             m_ptr = ptr;
