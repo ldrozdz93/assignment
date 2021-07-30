@@ -1,7 +1,7 @@
 cmake_minimum_required (VERSION 2.8) 
 project (CODILIME_SHARED_PTR)
 
-add_executable (tests  tests.cpp test-main.cpp)
+add_executable (tests assignment.cpp main.cpp)
 find_package(Boost REQUIRED COMPONENTS thread)
 
 set_target_properties(tests PROPERTIES

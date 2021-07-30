@@ -12,6 +12,7 @@ RUN apt-get update -q \
     make \
     libstdc++-10-dev \
     libboost-dev \
+    libboost-thread-dev \
  && apt-get clean -q
 
 ENV CC=/usr/bin/clang-10
@@ -24,6 +25,6 @@ WORKDIR /usr/src/cpp/codilime/
 
 RUN mkdir build && \
     cd build && \
-    cmake  .. && \
+    cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo .. && \
     make -j 2 all && \
-    ./tests/tests
+    ./tests
