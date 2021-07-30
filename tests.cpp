@@ -16,6 +16,10 @@ public:
     std::atomic<std::size_t> m_count;
     void delete_owned(const ptr_t ptr) { m_deleter(ptr); }
 
+    [[nodiscard]] std::size_t get_count() const noexcept { return m_count; }
+    void increment_count() noexcept { ++m_count; }
+    void decrement_count() noexcept { ++m_count; }
+
 private:
     const deleter_t m_deleter;
 };
@@ -71,6 +75,51 @@ public:
         : m_control_block{other.m_control_block}, m_ptr{other.m_ptr} {
         other.m_control_block = nullptr;
         other.m_ptr = nullptr;
+    }
+
+    void reset() noexcept {
+        if (m_control_block) {
+            --m_control_block->m_count;
+            if (!m_control_block->m_count) {
+                m_control_block->delete_owned(
+                    const_cast<std::remove_const_t<value_t>*>(m_ptr));
+                // TODO: handle weak_ptr count
+                delete m_control_block;
+                m_control_block = nullptr;
+                m_ptr = nullptr;
+            }
+        }
+    }
+
+    friend bool operator==(const SharedPtr& lhs,
+                           const SharedPtr& rhs) noexcept {
+        return lhs.get() == rhs.get();
+    }
+
+    SharedPtr& operator=(std::nullptr_t) noexcept {
+        reset();
+        return *this;
+    }
+
+    SharedPtr& operator=(ptr_t ptr) {
+        if (get() != ptr) {
+            // note: order below relevant for strong exception safety
+            auto* new_control_block = new control_block_t{
+                std::default_delete<std::remove_const_t<value_t>>{}};
+            reset();
+            m_control_block = new_control_block;
+            m_ptr = ptr;
+        }
+        return *this;
+    }
+
+    SharedPtr& operator=(const SharedPtr& other) noexcept {
+        if (*this != other) {
+            static_assert(std::is_nothrow_copy_constructible_v<SharedPtr>);
+            this->~SharedPtr();
+            new (this) SharedPtr{other};
+        }
+        return *this;
     }
 
     ~SharedPtr() {
@@ -218,6 +267,34 @@ TEST_CASE("Construction") {
                         CHECK(Traced::alive_count() == 0);
                     }
                 }
+            }
+        }
+    }
+}
+
+TEST_CASE("Assignment") {
+    GIVEN("a shared pointer") {
+        SharedPtr<Traced> sut{new Traced{}};
+        REQUIRE(Traced::alive_count() == 1);
+        WHEN("assigned nullptr") {
+            sut = nullptr;
+            THEN("it's value will be reset") {
+                CHECK(sut.get() == nullptr);
+                CHECK(Traced::alive_count() == 0);
+            }
+        }
+        WHEN("assigned its value") {
+            sut = sut.get();
+            THEN("it's value will be proper") {
+                CHECK(sut.get() != nullptr);
+                CHECK(Traced::alive_count() == 1);
+            }
+        }
+        WHEN("assigned itself") {
+            sut = sut;
+            THEN("it's value will be proper") {
+                CHECK(sut.get() != nullptr);
+                CHECK(Traced::alive_count() == 1);
             }
         }
     }
